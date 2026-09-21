@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "cn.hlzinterface.airxapi/flight-booking",
+  "title": "TourMind Flight Booking",
+  "description": "Flight search, booking, order and payment tools using the existing TourMind service.",
+  "repository": {
+    "url": "https://github.com/tourmind-com/flight-booking-ai-mcp",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://airxapi.hlzinterface.cn/skill/flight/v1/mcp",
+      "headers": [
+        {
+          "name": "X-Skill-Token",
+          "description": "TourMind uk_ or sk_ credential. Required for protected flight tools; public airport and ToC update checks need no credential.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
