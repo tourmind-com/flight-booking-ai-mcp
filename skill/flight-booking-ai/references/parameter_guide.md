@@ -1,44 +1,42 @@
 # Flight MCP Parameter Guide
 
-This is the MCP tool request and response contract for Flight Booking AI. It preserves the current service DTOs and validation. Do not add supplier-only fields or send `AgentCode`; the server supplies its own agent code.
+This is the tool-argument and structured-response contract for Flight Booking AI on the connected `tourmind-flight` MCP server. It is derived from the current TourMind service DTOs and validation. Do not add supplier-only fields, credentials, `AgentCode`, or `CreatorUser` to tool arguments; the connection and server supply authentication and internal identity.
 
 ## Transport, authentication, and envelope
 
-- **MCP endpoint:** `https://airxapi.hlzinterface.cn/skill/flight/v1/mcp`. The Agent uses the connected MCP server and never calls the backend HTTP endpoints directly.
-- **Tool arguments:** pass only each tool's documented JSON argument object.
-- **Connection credential:** configure `X-Skill-Token: uk_...` for the personal channel or `X-Skill-Token: sk_...` for the business channel as a secret MCP connection header. Never put either credential in tool arguments or a URL.
-- **Success condition:** a flight tool succeeds only when its structured response envelope has `code == 0`. A nonzero `code` is a failure even when transport succeeded.
-- **Business-flight permission condition:** on the business channel, `code == 20105` means the `sk_` credential was accepted but the account has not enabled flight-booking access. Handle this exact code before generic authentication or nonzero-code rules.
+- **Server:** the connected `tourmind-flight` MCP server, using Streamable HTTP at `https://airxapi.hlzinterface.cn/skill/flight/v1/mcp`.
+- **Calls:** use the named MCP tools and the JSON objects below as tool arguments. Do not construct direct HTTP requests or use an identically named tool on another server.
+- **Credentials:** the host injects a configured `uk_` or `sk_` credential through the connection's secret `X-Skill-Token` header. Never put credentials in tool arguments, URLs, local files, or chat. Configuration occurs through the host's supported connection settings and reconnect flow.
+- **Success:** a tool succeeds only when its structured envelope has `code == 0`; transport success alone is insufficient.
+- **Token change:** `verify_offer` business `code == 20105` triggers [token-change recovery](#token-change-recovery) for either channel, before generic errors.
 
 ```json
 {"code":0,"message":"success","data":{}}
 ```
 
-| Connection credential | Flight channel | Protected-tool behavior |
+| Connection credential state | Channel | Behavior |
 | --- | --- | --- |
-| Missing or empty | None | Airport lookup remains public; stop all other operations and show both personal and business authorization choices. |
-| Begins with `uk_` | Personal (ToC) | Use it only as the secret MCP `X-Skill-Token` connection header. |
-| Begins with `sk_` | Business (ToB) | Use it only as the secret MCP `X-Skill-Token` connection header. |
-| Any other value | Unrecognized | Call no protected tool; ask the user to configure a complete `uk_` or `sk_` credential and reconnect. |
+| Missing or empty | None | Airport lookup and flight search are available. Verification and all order/payment operations require authorization. |
+| `uk_` configured securely | Personal (ToC) | Host sends the secret header; never pass it as an argument. |
+| `sk_` configured securely | Business (ToB) | Host sends the secret header; never pass it as an argument. |
+| Unrecognized or rejected | Unusable | Stop protected work and request secure connection reconfiguration; never bypass a rejection with anonymous search. |
 
-| Operation | MCP tool | Authentication |
+| Operation | MCP tool on `tourmind-flight` | Authentication |
 | --- | --- | --- |
-| Skill update check | `check_skill_update` | Public ToC behavior with no credential or `uk_`; ToB behavior with `sk_`. |
 | Airport lookup | `search_airports` | Public. |
-| Flight search | `search_flights` | Protected. |
+| Flight search | `search_flights` | Optional configured credential; an existing credential must be validated rather than bypassed. |
 | Offer verification | `verify_offer` | Protected. |
 | Booking creation | `create_booking` | Protected. |
 | Payment creation | `create_payment` | Protected. |
 | Payment query | `query_payment` | Protected. |
 | Order query | `query_order` | Protected. |
+| Update check | `check_skill_update` | Read-only; pass only `current_version`. The server selects public ToC or authenticated ToB behavior from its connection. |
 
-The personal and business channels use the same MCP endpoint and tool names. The server verifies the connection's `X-Skill-Token`, selects the account channel from the credential, and derives `AgentCode` and `CreatorUser` before processing a protected operation. Even for a `uk_` credential, do not send `user_key`, `AgentCode`, or `CreatorUser` as tool arguments.
+Both channels share this server and these tools. The server selects the channel from its connection credential and supplies `AgentCode` and `CreatorUser`. Never send `user_key`, `AgentCode`, `CreatorUser`, a token, or a header inside a tool argument object.
 
-A search, quotation, verification session, booking confirmation, order, and payment context belongs to the credential channel that created it. Changing the MCP connection credential, especially between `uk_` and `sk_`, invalidates pre-order quotations, sessions, and confirmations and requires a user-approved fresh search and verification. Existing order and payment operations must remain on the creation channel with a matching-prefix credential authorized to access the order; never probe both channels.
+A search belongs to its nonsecret connection-generation marker, as defined in `SKILL.md`. Never inspect, hash, or compare actual secrets. A known new or changed `sk_` connection followed by a verification request authorizes one refresh search and customer reselection; verification 20105 uses the same flow. If credential continuity cannot be established from trusted host metadata or the user's configuration report, invalidate pre-order context and obtain approval for a fresh search. Existing orders remain on their creation channel with authorized credentials; never probe both channels.
 
-After an authentication failure, follow [authentication recovery](authentication.md): stop the affected operation, tell the user to remove or replace the rejected secret connection header and reconnect, and do not retry automatically. There is no independent public credential-validation tool; do not invent one or use booking or payment creation to test a replacement. A reconnected credential may be used only for the next protected operation the user explicitly requests or approves after that operation's normal validations and confirmations. The official tool response is authoritative; another authentication rejection restarts recovery.
-
-Do not route a ToB response with business `code == 20105` into authentication recovery, even if its transport status or message contains authentication-like wording. Keep the configured MCP credential. Stop the permission-gated booking workflow, do not retry or switch channels, and use the [business-flight-permission template](response_templates.md#business-flight-booking-access-required). The user may still request flight-price searches. After they report that access was enabled, require an explicit request and start again with a new live search before verification or booking.
+After authentication rejection, follow [authentication recovery](authentication.md): mark the connection rejected, stop, and direct the user to remove or replace its secret header and reconnect. Do not claim to clear settings you cannot modify, retry the rejected connection, fall back to HTTP, or resume merely because reconnection occurred. There is no independent credential-validation tool; never invent one or use creation tools for testing. Configuring a replacement permits no call until the user explicitly requests or approves the next operation and its normal checks are satisfied.
 
 ## Airport lookup
 
@@ -85,7 +83,7 @@ For a flight-search leg, use the matched city's `city_code` when the user accept
 
 ### `search_flights`
 
-Protected tool-argument example:
+Tool-argument example; authentication, when configured, is supplied only by the connection:
 
 ```json
 {
@@ -205,7 +203,7 @@ Each `baggage` item contains:
 
 ### `verify_offer`
 
-Protected tool arguments:
+Protected request:
 
 ```json
 {"offer_id":"offer-1","adults":1,"children":0,"infants":0}
@@ -227,7 +225,7 @@ Apply the [passenger-composition gate](passenger_details.md#passenger-compositio
 
 The returned `offer`, `total_price`, `currency`, and `session_id` are authoritative. Verification is not booking approval: present the verified result and obtain explicit final confirmation before creating a booking.
 
-On a ToB verification response with business `code == 20105`, do not treat the MCP credential as invalid and do not describe the offer as unavailable. The account may search price information, but it cannot proceed through verification to booking until business flight-booking access is enabled. Clear any verification or booking-confirmation state for the selected offer, keep the search result only as informational price output until its normal expiry, and follow the dedicated permission rule above.
+Before verification, a new or changed `sk_` token since search requires [token-change recovery](#token-change-recovery). Verification business `code == 20105` uses the same flow: search once with the latest token, show new quotations and wait for a new selection; never automatically match and verify the earlier choice.
 
 ## Booking creation
 
@@ -238,7 +236,7 @@ Protected tool-argument example (one adult passenger; `agent_order_no` is option
 ```json
 {
   "session_id":"session-verified-1",
-  "agent_order_no":"client-order-20260910-001",
+  "agent_order_no":"caller-order-20260910-001",
   "passengers":[
     {
       "index":1,
@@ -270,7 +268,7 @@ Top-level fields:
 | Field | Required | Rules |
 | --- | --- | --- |
 | `session_id` | Yes | Nonblank verified session ID. Use the authoritative value from verification. |
-| `agent_order_no` | No | Optional client/agent order number. |
+| `agent_order_no` | No | Optional caller/agent order number. |
 | `passengers` | Yes | Nonempty passenger array. Do not send an ancillary-items field. |
 | `contact` | Yes | Contact object described below. |
 
@@ -291,7 +289,7 @@ Every passenger uses these fields:
 | `card_issue_place` | Conditional | Required with all document/card fields; two- or three-letter country code, normalized to uppercase. |
 | `associated_index` | Yes | `0` for adults and children. For an infant, the index of an adult passenger. Each adult may be associated with at most one infant. |
 
-The table's conditional document fields describe API validation. This Skill's booking flow requires all four document fields even when `support_no_card: true`. Apply [passenger details and confirmation](passenger_details.md) and use the canonical [passenger collection and review templates](response_templates.md). Warn that names must match the travel document or boarding may be affected, and show First name and Last name separately in the final confirmation tables with complete unmasked passenger, document, and contact details. If the actual composition differs from the quote, follow the requotation flow before booking. The request has no ancillary field: the server sends an empty ancillary list.
+The table's conditional document fields describe API validation. This Skill's booking flow requires all four document fields even when `support_no_card: true`. Apply [passenger details and confirmation](passenger_details.md) and use the canonical [passenger collection and review templates](response_templates.md). Warn that names must match the travel document or boarding may be affected, and show First name and Last name separately in the final confirmation tables with complete unmasked passenger, document, and contact details. If the actual composition differs from the quote, follow the requotation flow before booking. The tool-argument object has no ancillary field: the server sends an empty ancillary list.
 
 `contact` fields:
 
@@ -357,7 +355,7 @@ For Stripe, use `total_price` and `currency` from the latest eligible `query_ord
 
 Before `create_payment`, show the order total, 3.5% rate, numeric fee, numeric payable total, and non-refundable-fee notice in the complete payment review. Identify locally calculated values as the pre-payment calculation, not as values already returned by the payment API. Obtain explicit confirmation of the fee amount, payable total, and non-refundable nature. If an authoritative fee/payable breakdown for the same order and selected method is already returned, show those values instead. Recalculate and renew confirmation whenever the order amount, currency, or method changes. Other methods do not incur this Stripe fee.
 
-The request contract remains only `order_no` plus `payment_method`; never send a locally calculated order amount, fee, payable amount, or return URL. The payment service applies the fee. After creation or query, use the service-returned `amount` as the payable total and any explicit returned fee breakdown as authoritative; never add 3.5% again. If the returned total or explicit fee differs from the confirmed review, highlight the difference and obtain confirmation of the returned amounts before directing the customer to pay; do not create another payment to resolve the discrepancy.
+The tool-argument contract remains only `order_no` plus `payment_method`; never send a locally calculated order amount, fee, payable amount, or return URL. The payment service applies the fee. After creation or query, use the service-returned `amount` as the payable total and any explicit returned fee breakdown as authoritative; never add 3.5% again. If the returned total or explicit fee differs from the confirmed review, highlight the difference and obtain confirmation of the returned amounts before directing the customer to pay; do not create another payment to resolve the discrepancy.
 
 ### `query_payment`
 
@@ -448,7 +446,7 @@ Before presenting payment methods or a payment review, apply this gate to the im
 
 After the user explicitly confirms the complete payment review, call `query_order` again immediately before `create_payment` and reapply the gate. If this final query fails, do not create payment. If any reviewed status, amount, currency, itinerary, passenger data, or deadline changed, invalidate the confirmation. For a changed order that remains payable, show the complete updated review and obtain another explicit confirmation; for a nonpayable order, use the payment-unavailable template.
 
-This final client-side query narrows but cannot eliminate a state change between `query_order` and `create_payment`. The payment service must enforce the same payable-order gate atomically when it processes creation and reject an order that has become nonpayable. Do not treat the client's preflight as evidence that the endpoint performed that server-side check.
+This final caller-side query narrows but cannot eliminate a state change between `query_order` and `create_payment`. The payment service must enforce the same payable-order gate atomically when it processes creation and reject an order that has become nonpayable. Do not treat the caller's preflight as evidence that the payment tool performed that server-side check.
 
 Each `passengers` item has `index` (integer), `type` (`adult`, `child`, `infant`, or `unknown`), `first_name` (string), and `last_name` (string). Each `journeys` item has `index`, `departure_city`, `departure_airport`, `arrival_city`, `arrival_airport`, `transfer_count`, and `duration_minutes`.
 
@@ -456,32 +454,55 @@ Each `segments` item has `index`, `group`, `airline`, `flight_no`, `operating_ai
 
 Nullable timestamps are omitted when absent. Empty collections are returned as `[]`, never `null`. The response intentionally excludes document data, birthdays, nationality, phone numbers, email addresses, addresses, remarks, supplier/internal identifiers, cost fields, ancillary data, and refund metadata.
 
+### Payment guidance for ticketing questions
+
+When a customer has a known order and asks about next steps, how ticket issuance proceeds, or when they will receive tickets, treat this as a request for guidance on that order. Use the immediately preceding successful `query_order` result; if no current result is available, query the known order first. A creation response, old query, or payment URL alone is not a current payment-eligibility check.
+
+Guide payment only when the current query returns `status == booking_successful`, both `paid_at` and `ticketed_at` are absent, `tickets` is empty, and any returned payment deadline is reliably interpretable and in the future. An absent deadline alone does not block this guidance. If paid/ticketed evidence is present, the order has another status, the deadline has passed or is unusable, or the query failed, report the actual status or uncertainty and use the existing query/reconciliation/support rules instead of prompting payment again.
+
+For an eligible order, use the [payment-before-ticketing notice](response_templates.md#payment-before-ticketing) and explain that the order has been created and the next step is payment before ticketing. Show the returned order amount/currency and remind the customer of the returned deadline; if absent, say no payment deadline was returned and ask them to complete payment promptly. Do not invent a cutoff or promise an issuance time, immediate ticketing, or guaranteed issuance after payment.
+
+Then continue the existing payment workflow: offer the payment methods allowed for the order currency, retain the required fee disclosures, and ask the customer to choose. If a method was already selected, show the complete current payment review and obtain explicit confirmation. The informational question, earlier booking confirmation, and payment-method choice alone do not authorize `create_payment` or replace its existing final checks. Do not create a new booking or claim to execute ticketing.
+
+If a payment has already been initiated or its creation outcome is uncertain, use `query_payment` to reconcile before offering a new payment. For a current `created` payment with a returned URL and a still-payable order, guide the customer to that complete, unmodified URL subject to the existing amount/fee confirmation rules, without duplicate creation. A paid payment requires status guidance; an unknown or failed query requires reconciliation, not a new payment invitation.
+
 ## Error actions and redaction
+
+### Token-change recovery
+
+Apply this flow before verification when the user asks to verify a quotation after configuring a new or changed `sk_` token since its search, including no-token to `sk_`, `uk_` to `sk_`, and one `sk_` value to another. Detect the change before calling `verify_offer`; do not submit the stale quotation to obtain an error. Reconfiguring the same credential is not a change when continuity is established by trusted nonsecret host metadata or the user's explicit report; never compare secrets yourself. A machine-readable `verify_offer` business `code == 20105` also triggers this flow for either credential channel, before generic authentication or business-error handling. Other operations returning 20105 retain their normal stage-specific error/reconciliation rules.
+
+1. Keep the original search criteria and confirmed passenger counts. Clear the entire old quotation set, quotation-number mappings, offer IDs, selected-quotation state, verification sessions, and booking confirmations. Retain known order numbers and reconciliation evidence; do not treat existing orders as a new booking. Keep the latest securely configured connection and its nonsecret generation evidence; never inspect the secret.
+2. Require the host connection to use the latest securely configured credential; if reconfiguration is needed, direct the user to its secret-header settings and reconnect. Never read or pass the secret yourself. Verification still requires authorization. If missing, stop and request authorization. Ordinary authentication rejections retain their recovery rules; never bypass them with anonymous search.
+3. Revalidate the original dates and criteria, then call `search_flights` once through the latest authorized connection with unchanged route, dates, cabin, flight preference, and adult/child/infant counts. The user's request to verify after changing authorization already permits this refresh; do not ask for separate search permission. Configuring or reconnecting a credential alone does not authorize a tool call. Do not call `verify_offer`, booking, or payment during this refresh.
+4. On a successful search, replace all prior results with the new offers, fresh number mappings, response time, and current nonsecret credential-generation marker. Display the normal search-results table, preserving the API order and usual first-10 pagination. Include the [quotation refresh notice](response_templates.md#token-change-quotation-refresh) in the user's language, explaining the token change and requesting a new selection. Use no internal agent codes, backend routing details, raw error codes, credential fragments, or technical diagnostics in this explanation. Claim refreshed quotations only after the new search succeeds.
+5. Stop and wait for the customer's new selection, even if exactly one new offer matches the earlier flight or its price is unchanged. The old selection and any advance instruction to reuse it do not select from the new table. Once the customer selects a fresh quotation and the credential generation is unchanged, apply normal freshness/count checks and call `verify_offer` with that new offer ID. Do not trigger another search just because the current token starts with `sk_`. Verification still requires the normal later booking review and explicit confirmation.
+6. A failed refresh or empty result stops the flow; report the failed search or no available quotations without restoring old offers or claiming a successful refresh returned quotations. Allow at most one refresh search per user verification request, including transport failures. Do not loop or automatically replay verification. If a later customer-selected verification returns 20105 again, a new bounded refresh may display new results, but must again stop for a new selection.
 
 ### Failed-quotation recovery
 
-A nonzero response `code` is a failed tool call, including when MCP transport succeeded. Handle ToB business `code == 20105` as the dedicated permission condition before the generic recovery below. Never display its raw message or other service/transport exceptions to the customer. Explain the affected booking stage in friendly language, retain the known order/payment state, and select the recovery below.
+A nonzero response `code` is a failed request, including when underlying HTTP status is 200. Handle `verify_offer` business `code == 20105` with token-change recovery before the generic recovery below. Never display its raw message or other API/transport exceptions to the customer. Explain the affected booking stage in friendly language, retain the known order/payment state, and select the recovery below.
 
-Except for the dedicated ToB `code == 20105` permission condition, remove any affected failed offer from selectable quotation state, its quotation-number-to-`offer_id` mapping, associated verified session, and booking confirmation. For a failed search, clear the current quotation set. Keep order numbers, payment state, and sanitized reconciliation evidence even when a quotation is removed. Do not offer the failed quotation again or ask the customer to pick another quotation from the old results table as recovery. A fresh successful search replaces the old table and its mappings with newly numbered offers.
+For verification 20105 clear the entire quotation set as specified above; for other failures remove any affected failed offer from selectable quotation state, its quotation-number-to-`offer_id` mapping, associated verified session, and booking confirmation. For a failed search, clear the current quotation set. Keep order numbers, payment state, and sanitized reconciliation evidence even when a quotation is removed. Do not offer the failed quotation again or ask the customer to pick another quotation from the old results table as recovery. A fresh successful search replaces the old table and its mappings with newly numbered offers.
 
 | Failure stage | Recovery |
 | --- | --- |
-| ToB business `code == 20105` | Keep the configured `sk_` MCP credential. Stop the permission-gated booking workflow, clear verification/booking-confirmation state for the selected offer, and use the business-flight-permission template. Do not enter authentication recovery, request a replacement credential, retry, or switch channels. User-requested price searches may continue; after access is enabled, require an explicit request and a new live search before verification or booking. |
+| `verify_offer` business `code == 20105` | Keep the current token, clear old quotations and sessions, search once, display the refreshed results with a token-change explanation, and wait for the customer to select again. Follow [token-change recovery](#token-change-recovery). |
 | Airport lookup or flight search | Explain that the lookup/search did not complete. Correct known invalid inputs; invite the user to retry lookup or run a fresh search after criteria are valid. Never fall back to an older results table. |
 | Offer verification | Delete the failed quotation, session, and confirmation; politely explain that it cannot currently be confirmed and invite a fresh search using the confirmed criteria. Do not ask for another selection from old quotations. |
 | Booking creation, with authoritative confirmation that no order was created | Delete the failed quotation/session/confirmation. Explain that booking did not complete and offer a new search; after the user authorizes it, search live, verify a newly selected quotation, and obtain a new complete booking review confirmation. |
 | Booking creation that may have reached the service, without authoritative confirmation of outcome | Invalidate the quotation for reuse, retain reconciliation evidence, and first reconcile using a known real order number or customer service. A nonzero code alone does not prove no order exists. Do not direct the customer into a replacement booking while the earlier outcome is unknown. |
 | Order query, payment creation, or payment query for an existing order | Preserve the real order. Explain that order/payment handling did not complete or is unconfirmed; query/reconcile or refer to customer service as appropriate. Do not turn payment/query failure into a new booking or flight search. |
-| Authentication failure at any stage | Stop the affected operation, tell the user to remove or replace the rejected secret MCP connection header and reconnect, and show the matching official credential guidance. Do not retry automatically. A replacement may be used only for a later user-requested or approved operation after normal preconditions are satisfied; any affected failed quotation remains removed. |
+| Authentication failure at any stage | Mark the connection rejected, stop the operation, and direct secure header replacement/removal and reconnection with the matching official authorization guidance. Do not retry automatically. A replacement may be used only for a later user-requested or approved operation after normal preconditions are satisfied; any affected failed quotation remains removed. |
 
-A nonzero business code does not authorize automatic retry or automatic fresh search. Obtain a user instruction for the new search, revalidate criteria and dates, and show only its new results. For a verification failure other than ToB `code == 20105` before any booking attempt, use the [verification failure template](response_templates.md#failure-and-reconciliation). Select the order-state statement from actual evidence for other stages. Distinguish local input validation, which must be corrected before sending, from an API rejection, which also invalidates affected quotations.
+Outside verification 20105 token-change recovery, a nonzero business code does not authorize automatic retry or automatic fresh search. Obtain a user instruction for the new search, revalidate criteria and dates, and show only its new results. For a verification failure other than verification `code == 20105` before any booking attempt, use the [verification failure template](response_templates.md#failure-and-reconciliation). Select the order-state statement from actual evidence for other stages. Distinguish local input validation, which must be corrected before sending, from an API rejection, which also invalidates affected quotations.
 
 | Condition | Required action |
 | --- | --- |
 | `code == 0` | Continue only with the returned `data`; for verification, still obtain explicit booking confirmation. |
-| ToB business `code == 20105` | Handle before every transport-status or error-text rule. Keep the accepted `sk_` MCP credential, stop the permission-gated booking workflow, and use the [business-flight-permission template](response_templates.md#business-flight-booking-access-required). Do not replace the credential, retry, or switch channels. |
-| Nonzero business `code` after successful transport | Remove affected failed quotations and follow the stage-specific recovery above; invite a fresh search when appropriate instead of reselection from the old table. Retain order/payment uncertainty, and never expose the original message or retry automatically. |
-| Authentication rejection, underlying HTTP 401, `unauthorized`, or `invalid_token`, after excluding ToB `code == 20105` | Stop the affected operation and follow [authentication recovery](authentication.md). Tell the user to remove or replace the rejected secret MCP connection header and reconnect. Never retry the rejected connection, search for another credential, switch channels silently, or automatically replay the operation after reconnection. |
+| `verify_offer` business `code == 20105` | Keep the current token, clear old quotations and sessions, search once, display the refreshed results with a token-change explanation, and wait for the customer to select again. Follow [token-change recovery](#token-change-recovery). |
+| Nonzero business `code` (including HTTP 200) | Remove affected failed quotations and follow the stage-specific recovery above; invite a fresh search when appropriate instead of reselection from the old table. Retain order/payment uncertainty, and never expose the original message or retry automatically. |
+| HTTP 401, `unauthorized`, or `invalid_token`, after excluding verification `code == 20105` | Mark the connection rejected, stop, and follow [authentication recovery](authentication.md) for secure header replacement/removal and reconnection. Never retry the rejected token, search for another credential, switch channels silently, or automatically replay the operation after a replacement is configured. |
 | Transient transport error or HTTP 5xx during airport lookup, search, or verification, without a nonzero business response or authentication failure | Retry the identical request once only. |
 | Ambiguous booking result (for example, timeout or HTTP 5xx after the request may have been sent) | Stop creation. If a real order number is known, use `query_order` to reconcile; otherwise state that no order number was returned and creation is unknown, and provide customer service. Do not repeat booking until absence of an order is confirmed, a user-authorized fresh search and verification have completed, and the user approves the new complete booking review. |
 | Missing or unsupported payment method | Do not call payment creation. Present the methods allowed for the queried order currency and request a supported selection. |

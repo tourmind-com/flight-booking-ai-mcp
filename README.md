@@ -30,7 +30,7 @@ Production endpoint:
 https://airxapi.hlzinterface.cn/skill/flight/v1/mcp
 ```
 
-The connection may be created without a credential for public airport lookup and the public ToC update check. Flight search, verification, booking, order, and payment tools require an `X-Skill-Token` connection header containing either a personal `uk_` credential or a business `sk_` credential.
+The connection may be created without a credential for public airport lookup, live flight search, and the public ToC update check. Verification, booking, order, and payment tools require an `X-Skill-Token` connection header containing either a personal `uk_` credential or a business `sk_` credential. If a credential is configured, flight search uses it and does not silently bypass a rejected credential by retrying anonymously.
 
 - Personal users obtain a `uk_` credential by signing in at <https://auth.journione.ai>.
 - Business users obtain an `sk_` credential at <https://tourmind.com/user/skill-token>. A business account can be requested at <https://tourmind.com/admin/skillSignup>.
@@ -43,7 +43,7 @@ Configure the credential as a secret MCP connection header and reconnect. Do not
 |---|---|---|
 | `check_skill_update` | Check the companion Skill version | Public for no credential/ToC; ToB when connected with `sk_` |
 | `search_airports` | Resolve cities and airports | Public |
-| `search_flights` | Search live flight offers | Required |
+| `search_flights` | Search live flight offers | Optional; a configured credential must validate |
 | `verify_offer` | Verify a selected offer and obtain a booking session | Required |
 | `create_booking` | Create a booking after explicit confirmation | Required |
 | `query_order` | Query an existing flight order | Required |

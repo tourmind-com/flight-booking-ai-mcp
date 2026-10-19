@@ -15,18 +15,18 @@ You can ask me like this:
 
 > Find an Economy flight from Shanghai to Beijing on {future_date} for 3 adults, 1 child, and 0 infants.
 
-Airport lookup is available immediately. A TourMind credential is required for live flight search, verification, booking, order queries, and payment:
+Airport lookup and flight search are available without a Token. A Token is required for verification, booking, order queries, and payment:
 
-- Personal users: sign in at https://auth.journione.ai to obtain a `uk_` credential.
-- Business users: obtain an `sk_` credential at https://tourmind.com/user/skill-token. If you do not have a business account, register at https://tourmind.com/admin/skillSignup.
+- Personal users: sign in at https://auth.journione.ai to obtain a `uk_` Token.
+- Business users: obtain an `sk_` Token at https://tourmind.com/user/skill-token. If you do not have a business account, register at https://tourmind.com/admin/skillSignup.
 
-Configure the credential as the MCP connection's secret `X-Skill-Token` header, then reconnect. Do not paste it into this conversation.
+Configure the appropriate Token as the `tourmind-flight` connection's secret `X-Skill-Token` header in your connection settings, then reconnect. Do not paste it into this chat.
 ```
 
 When authorization is already configured, replace the authorization block with:
 
 ```markdown
-Authorization is configured on the MCP connection. I will not display or repeat the credential.
+Authorization is configured on the flight connection. I will not display or repeat its secret credential.
 ```
 
 ## Authorization required
@@ -36,10 +36,10 @@ Use before any protected operation when no usable credential is configured. If t
 ```markdown
 Authorization is required before I can {protected_operation}.
 
-- Personal users: sign in at https://auth.journione.ai to obtain a `uk_` credential.
-- Business users: obtain an `sk_` credential at https://tourmind.com/user/skill-token. If you do not have a business account, register at https://tourmind.com/admin/skillSignup.
+- Personal users: sign in at https://auth.journione.ai to obtain a `uk_` Token.
+- Business users: obtain an `sk_` Token at https://tourmind.com/user/skill-token. If you do not have a business account, register at https://tourmind.com/admin/skillSignup.
 
-Configure the credential as the MCP connection's secret `X-Skill-Token` header, then reconnect. Do not paste it into this conversation. No order has been created by this request.
+Configure the appropriate Token as the `tourmind-flight` connection's secret `X-Skill-Token` header in your connection settings, then reconnect. Do not paste it into this chat. No order has been created by this request.
 ```
 
 ## Update available
@@ -54,7 +54,7 @@ Latest version: {latest_version}
 
 Updating is recommended to obtain TourMind's latest flight-search, verification, booking, and payment behavior because older tool contracts or operating rules may no longer remain available after a service update.
 
-I can download the update from the official sources listed at {release_source_url}. Would you like me to update the installed Skill? I will not change it without your confirmation.
+I can download the update from the official sources listed at {release_source_url}. Would you like me to update the installed Skill? I will not change it without your confirmation, and updating the Skill will not alter the MCP connection or its credential.
 ```
 
 ## Flight-offer results
@@ -188,6 +188,18 @@ Use the canonical [payment-method mapping](parameter_guide.md#payment-method-map
 
 Translate the generic label `Online Banking` naturally when appropriate, while preserving the product names Stripe, WeChat Pay, and Alipay. If a response contains an unrecognized string or number, do not show, transliterate, or guess from it. Omit the payment-method row and use the fixed fallback `The service did not return a recognized payment method.` translated into the response language.
 
+## Payment before ticketing
+
+Use for an existing-order next-step or ticket-issuance question only after the latest successful order query passes the payable-order gate. Show the normal order-query result, then this notice and the applicable payment-method selection or current payment review. Translate naturally into the customer's language.
+
+```markdown
+Your order {order_no} has been created. The order amount is {currency} {total_price}. Please complete payment first; you can then check the ticketing progress.
+
+{payment_deadline_notice}
+```
+
+If a valid future deadline was returned, set `{payment_deadline_notice}` to `Please complete payment before {payment_deadline}.` Otherwise, when it was absent, use `The order did not return a payment deadline. Please complete payment as soon as possible.` Do not use this notice for an expired or unparseable deadline, already-paid/ticketed evidence, another order status, or a failed query. Never promise an issuance time or treat this guidance as consent to create a payment. If payment was already initiated, follow the existing payment-query reconciliation and returned-link rules instead of creating another payment.
+
 ## Payment-method selection
 
 Use only after the latest order query passes the payable-order gate.
@@ -315,7 +327,7 @@ Render the returned itinerary summary first, followed by:
 The status above is exactly what the service returned. No payment or ticketing outcome is inferred from another field.
 ```
 
-If the deadline is absent, leave that cell empty.
+If the deadline is absent, leave that cell empty. For questions about ticket issuance or next steps on a payable order, continue with [payment before ticketing](#payment-before-ticketing) rather than ending with only the status table or a support referral.
 
 ## Payment creation result
 
@@ -364,38 +376,32 @@ For Stripe, insert a `Stripe processing fee` row immediately before the total-pa
 Use the acquisition path matching the rejected credential. If its channel is unknown, include both paths.
 
 ```markdown
-Authentication was rejected, so {operation_outcome}. I will not retry the operation automatically. Remove or replace the rejected secret `X-Skill-Token` header in your MCP client, then reconnect. {authorization_path} Do not paste the replacement credential into this conversation. I will continue only after you explicitly request or approve the next operation and its normal checks are complete. {order_state}
+Authentication was rejected, so {operation_outcome}. I stopped using the rejected flight connection and will not retry automatically. {authorization_path} Remove or replace the secret `X-Skill-Token` header in the `tourmind-flight` connection settings and reconnect; do not paste the Token into this chat. I will continue only after you explicitly request or approve the next operation and its normal checks are complete. {order_state}
 ```
 
 Use one authorization path:
 
-- Personal: `Sign in at https://auth.journione.ai to obtain a new personal credential.`
-- Business: `Obtain a new business credential at https://tourmind.com/user/skill-token. If you do not have a business account, register at https://tourmind.com/admin/skillSignup.`
+- Personal: `Sign in at https://auth.journione.ai to obtain a new personal Token.`
+- Business: `Obtain a new business Token at https://tourmind.com/user/skill-token. If you do not have a business account, register at https://tourmind.com/admin/skillSignup.`
 - Unknown: include both personal and business paths from the authorization-required template.
 
-Set `{operation_outcome}` to `{protected_operation} did not complete` for a read-only/preflight operation or when authoritative evidence confirms that creation did not occur. If a booking or payment creation request may have been dispatched and its outcome is not authoritative, set it to `{protected_operation} could not be confirmed`. Set `{order_state}` from evidence, for example `No booking request was sent, so this request did not create an order.` Never claim that no order exists after an ambiguous booking response. Reconnecting with a replacement credential does not by itself authorize replaying a failed search, booking, or payment operation.
+Set `{operation_outcome}` to `{protected_operation} did not complete` for a read-only/preflight operation or when authoritative evidence confirms that creation did not occur. If a booking or payment creation request may have been dispatched and its outcome is not authoritative, set it to `{protected_operation} could not be confirmed`. Set `{order_state}` from evidence, for example `No booking request was sent, so this request did not create an order.` Never claim that no order exists after an ambiguous booking response. Configuring a replacement credential or reconnecting does not authorize replaying a failed search, booking, or payment operation.
 
-## Business flight booking access required
+## Token-change quotation refresh
 
-Use only for a business-channel response with machine-readable business `code == 20105`. Do not use it for a generic 401, 403, message-text match, personal-channel error, or unknown business error.
+Use after a successful refresh caused by a new or changed `sk_` token since search plus a request to verify, or by a verification business `code == 20105`. No extra search approval is needed. Render the normal flight-offer results table from the latest response and include this notice, translated into the user's language:
 
 ```markdown
-### Business flight booking access is not enabled
-
-Your TourMind business credential was accepted, but this account does not currently have business flight-booking access. I kept the configured MCP credential and stopped {blocked_operation}. I will not replace it, retry automatically, or switch channels.
-
-You can continue to search flight prices. To verify an offer and book, contact your TourMind account administrator or business contact, or TourMind flight customer service at flightcs1@tourmind.com to enable access.
-
-{order_state}
+Because authorization changed, I have retrieved updated quotations. Please choose a quotation from the new results so I can verify it.
 ```
 
-For an offer-verification response, set `{order_state}` to `No booking request was sent, so this attempt did not create an order.` If the permission condition is ever returned after an operation that may have created or changed an order/payment, preserve the actual known order state or uncertainty; never use the verification-stage sentence without evidence.
+Wait for a new selection before verification, even when the original flight uniquely matches or its price is unchanged. Do not report that verification succeeded. Do not expose internal agent codes, backend routing, token fragments, raw error codes, or diagnostics. If the refresh fails, explain that updated quotations could not be retrieved. If it succeeds with no offers, explain that the refreshed search found none and use the normal no-offers response. Neither case permits fallback to old offers or an automatic repeat search. Preserve any known order or uncertain creation state.
 
 ## Failure and reconciliation
 
 Verification failure before booking:
 
-Do not use this generic verification-failure template for ToB business `code == 20105`; use the dedicated business-flight-permission template above.
+For the first verification `code == 20105`, use the token-change quotation refresh template above. If that one-cycle recovery fails, report the failed refresh without starting another automatic search.
 
 ```markdown
 This offer could not be confirmed and has been removed from the selectable offers. No booking request was sent. If you approve, I can run a new live search using the confirmed itinerary.
@@ -414,6 +420,8 @@ Order number: {order_no}. The payment operation could not be confirmed, so the p
 ```
 
 ## Unsupported operation
+
+Use this for requests to perform an unsupported action. A question about next steps or ticketing progress on an existing order must first follow the order-query and [payment-before-ticketing guidance](#payment-before-ticketing); do not classify it as unsupported merely because it mentions tickets.
 
 ```markdown
 This Skill cannot perform {requested_operation}. Baggage purchases, seat selection, cancellation, changes, refund initiation, manual payment, and ticketing require assistance from TourMind flight customer service.
