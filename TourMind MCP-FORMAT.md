@@ -4,7 +4,7 @@ This document defines the user-visible MCP connection, companion-Skill workflow,
 
 ## User connection
 
-Public connection for airport lookup and the ToC update check:
+Public connection for airport lookup, live flight search, and the ToC update check:
 
 ```json
 {
@@ -17,7 +17,7 @@ Public connection for airport lookup and the ToC update check:
 }
 ```
 
-Connection for live flight search and other protected tools:
+Connection for offer verification and other protected tools:
 
 ```json
 {
@@ -39,14 +39,14 @@ The MCP connection contains endpoint and authentication settings only. Keep the 
 
 | Credential state | Channel | Available operations |
 |---|---|---|
-| No credential | Public / ToC update | `search_airports` and the public `check_skill_update` path only |
+| No credential | Public / ToC update | `search_airports`, `search_flights`, and the public `check_skill_update` path |
 | Begins with `uk_` | Personal (ToC) | All documented tools, subject to normal workflow checks |
 | Begins with `sk_` | Business (ToB) | All documented tools, subject to account permissions and normal workflow checks |
 | Any other value | Invalid | No protected operation |
 
 Personal users obtain a `uk_` credential at <https://auth.journione.ai>. Business users obtain an `sk_` credential at <https://tourmind.com/user/skill-token>; business-account registration is available at <https://tourmind.com/admin/skillSignup>.
 
-The credential is supplied only through the MCP connection's `X-Skill-Token` header. It must not appear in tool arguments, URLs, results, logs, prompts, screenshots, commits, or issue reports. A changed credential requires the MCP client to reconnect and invalidates all pre-order quotation, verification, passenger-confirmation, and payment context held by the Agent. Existing orders remain bound to their creation channel.
+The credential is supplied only through the MCP connection's `X-Skill-Token` header. It must not appear in tool arguments, URLs, results, logs, prompts, screenshots, commits, or issue reports. A changed credential requires the MCP client to reconnect and invalidates all pre-order quotation, verification, passenger-confirmation, and payment context held by the Agent. The Agent tracks only nonsecret connection-generation evidence and never inspects or compares credential secrets. Existing orders remain bound to their creation channel.
 
 ## User-visible tools
 
@@ -54,7 +54,7 @@ The credential is supplied only through the MCP connection's `X-Skill-Token` hea
 |---|---|---|---|
 | `check_skill_update` | Read | Check whether the installed companion Skill has an update | Public for no credential/ToC; ToB when connected with `sk_` |
 | `search_airports` | Read | Resolve cities and airports from a keyword | Public |
-| `search_flights` | Read | Search live flight offers | Protected |
+| `search_flights` | Read | Search live flight offers | Public when no credential is configured; a configured credential must validate |
 | `verify_offer` | Read | Verify the selected offer and obtain a booking session | Protected |
 | `create_booking` | Destructive write | Create a booking after explicit confirmation | Protected |
 | `query_order` | Read | Query an existing flight order | Protected |
@@ -90,11 +90,11 @@ The companion Skill owns conversation workflow, quotation numbering, the 20-minu
 
 ## Authentication and permission behavior
 
-- `search_airports` remains usable without a credential.
-- `search_flights`, `verify_offer`, `create_booking`, `query_order`, `create_payment`, and `query_payment` require a valid `uk_` or `sk_` connection credential.
+- `search_airports` and `search_flights` remain usable without a credential. A configured credential is sent and must validate; the Agent must not bypass a rejected credential by retrying anonymously.
+- `verify_offer`, `create_booking`, `query_order`, `create_payment`, and `query_payment` require a valid `uk_` or `sk_` connection credential.
 - `check_skill_update` uses the public ToC update behavior when no credential or a `uk_` credential is connected, and the ToB update behavior when an `sk_` credential is connected.
-- Business `code == 20105` means the `sk_` credential was accepted but business flight-booking access is not enabled. The server must preserve this code. The Agent keeps the credential, permits later user-requested price searches, and stops verification/booking until access is enabled.
-- After excluding `code == 20105`, an authentication rejection stops the protected workflow. The user must replace the MCP connection credential and reconnect; the Agent must not automatically replay the failed operation or switch channels.
+- A machine-readable `verify_offer` business `code == 20105` means the displayed quotation belongs to an earlier credential generation. The Agent keeps the current connection, clears the old quotations, runs one search with the original criteria, displays the refreshed results, and waits for the customer to select again. It must not automatically match and verify an offer.
+- After excluding that verification-specific `code == 20105`, an authentication rejection stops the affected workflow. The user must replace or remove the MCP connection credential and reconnect; the Agent must not automatically replay the failed operation, retry anonymously, or switch channels.
 
 ## Skill version flow
 
@@ -124,10 +124,11 @@ The production MCP implementation must:
 
 - expose all eight tools listed above through Streamable HTTP at `https://airxapi.hlzinterface.cn/skill/flight/v1/mcp`;
 - reuse the existing TourMind flight service, authorization, validation, business implementation, and response contracts rather than maintaining a second set of flight logic;
-- keep `search_airports` public while protecting search, verification, booking, order, and payment tools;
+- keep `search_airports` and `search_flights` public when no credential is configured, while requiring any configured credential to validate and protecting verification, booking, order, and payment tools;
 - select the personal or business channel from the connected `uk_` or `sk_` credential and preserve the existing channel-bound order behavior;
 - expose `check_skill_update` as read-only and idempotent with one required semantic-version string, `current_version`;
-- preserve `code == 20105` as the dedicated business flight-permission result and keep it distinct from invalid credentials;
+- preserve `verify_offer` business `code == 20105` as the credential-generation-change result and keep it distinct from invalid credentials;
+- describe verification `code == 20105` as refresh-and-reselection in the published `verify_offer` tool contract; the server must not instruct clients to automatically match or verify an offer from the refreshed result set;
 - mark search, verification, order query, payment query, and update check as read-only; mark booking and payment creation as non-idempotent write operations;
 - reject malformed tool arguments with concrete errors and return the existing business envelope in structured content;
 - never accept the connection credential as a normal tool argument or return it in any result;

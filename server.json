@@ -7,7 +7,7 @@
     "url": "https://github.com/tourmind-com/flight-booking-ai-mcp",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "1.0.8",
   "remotes": [
     {
       "type": "streamable-http",
@@ -15,7 +15,7 @@
       "headers": [
         {
           "name": "X-Skill-Token",
-          "description": "TourMind uk_ or sk_ credential. Required for protected flight tools; public airport and ToC update checks need no credential.",
+          "description": "Optional TourMind uk_ or sk_ credential. Airport lookup, flight search, and public ToC update checks work without one; verification, booking, order, and payment tools require authorization.",
           "isRequired": false,
           "isSecret": true
         }
